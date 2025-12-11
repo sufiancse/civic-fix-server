@@ -61,6 +61,13 @@ async function run() {
     // save all users data in db
     app.post("/api/user", async (req, res) => {
       const userData = req.body;
+
+      const email = userData.email;
+      const isExist = await usersCollection.findOne({email});
+      if (isExist) {
+        return res.send({message: "User already exists."})
+      }
+
       const result = await usersCollection.insertOne(userData);
       res.send(result);
     });
