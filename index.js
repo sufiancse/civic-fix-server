@@ -56,18 +56,17 @@ async function run() {
     const db = client.db("civicFixDB");
     const issuesCollection = db.collection("issues");
     const usersCollection = db.collection("users");
+    const timelineCollection = db.collection("issuesTimeline");
 
     // Users data related APIs
     // save all users data in db
     app.post("/api/user", async (req, res) => {
       const userData = req.body;
-
       const email = userData.email;
-      const isExist = await usersCollection.findOne({email});
+      const isExist = await usersCollection.findOne({ email });
       if (isExist) {
-        return res.send({message: "User already exists."})
+        return res.send({ message: "User already exists." });
       }
-
       const result = await usersCollection.insertOne(userData);
       res.send(result);
     });
@@ -80,14 +79,35 @@ async function run() {
 
     // Issues data related APIs
     // Save a Issues data in db
-    app.post("/api/issues", async (req, res) => {
+    app.post("/api/report-issue", async (req, res) => {
       const issueData = req.body;
-      const result = await issuesCollection.insertOne(issueData);
-      res.send(result);
+      const issue = await issuesCollection.insertOne(issueData);
+
+      const issueTimeline = {
+        issueId: issue.insertedId,
+        status: "Pending",
+        message: "issue reported by citizen.",
+        updatedBy: "citizen",
+        createAt: new Date(),
+      };
+      const createIssueTimeline = await timelineCollection.insertOne(
+        issueTimeline
+      );
+
+      const issueSendBy = issueData.issueBy;
+      const query = { email: issueSendBy };
+      const update = {
+        $inc: {
+          totalIssues: 1,
+        },
+      };
+      const updateUserData = await usersCollection.updateOne(query, update);
+
+      res.json({ message: "Report an issue send successful." });
     });
 
     // get all issues from db
-    app.get("/api/issues", async (req, res) => {
+    app.get("/api/all-issues", async (req, res) => {
       const result = await issuesCollection.find().toArray();
       res.send(result);
     });
