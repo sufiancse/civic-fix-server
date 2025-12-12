@@ -73,7 +73,8 @@ async function run() {
 
     // get all users from db
     app.get("/api/users", async (req, res) => {
-      const result = await usersCollection.find().toArray();
+      const {email} = req.query
+      const result = await usersCollection.find({email}).toArray();
       res.send(result);
     });
 
