@@ -63,136 +63,199 @@ async function run() {
     app.post("/api/user", async (req, res) => {
       const userData = req.body;
       const email = userData.email;
-      const isExist = await usersCollection.findOne({ email });
-      if (isExist) {
-        return res.send({ message: "User already exists." });
+      try {
+        const isExist = await usersCollection.findOne({ email });
+        if (isExist) {
+          return res.send({ message: "User already exists." });
+        }
+        const result = await usersCollection.insertOne(userData);
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+        res.json({ message: "something went wrong" });
       }
-      const result = await usersCollection.insertOne(userData);
-      res.send(result);
     });
 
     // get all users data from db
     app.get("/api/users", async (req, res) => {
-      const { email, role } = req.query;
-      const query = {};
-      if (email) {
-        query.email = email;
+      try {
+        const { email, role } = req.query;
+        const query = {};
+        if (email) {
+          query.email = email;
+        }
+        if (role) {
+          query.role = role;
+        }
+        const result = await usersCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.log("get user error: ", error);
+        res.json({ message: "failed to fetch users" });
       }
-      if (role) {
-        query.role = role;
+    });
+
+    // admin block user & update user data
+    app.patch("/api/user/:id/block", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // Toggle block status
+        const updatedUser = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { isBlocked: !user.isBlocked } }
+        );
+
+        res.json({
+          message: `User ${
+            user.isBlocked ? "unblocked" : "blocked"
+          } successfully`,
+          isBlocked: !user.isBlocked,
+        });
+      } catch (error) {
+        console.log(error);
+        res.json({ message: "Something went wrong!" });
       }
-      const result = await usersCollection.find(query).toArray();
-      res.send(result);
     });
 
     // Issues data related APIs
     // Save a Issues data in db
     app.post("/api/report-issue", async (req, res) => {
-      const issueData = req.body;
-      const issue = await issuesCollection.insertOne(issueData);
+      try {
+        const issueData = req.body;
 
-      const issueTimeline = {
-        issueId: issue.insertedId,
-        status: "Pending",
-        message: "issue reported by citizen.",
-        updatedBy: "citizen",
-        createAt: new Date(),
-      };
-      const createIssueTimeline = await timelineCollection.insertOne(
-        issueTimeline
-      );
+        if (!issueData) {
+          return res.status(400).json({ message: "Issue data is required!" });
+        }
 
-      const issueSendBy = issueData.issueBy;
-      const query = { email: issueSendBy };
-      const update = {
-        $inc: {
-          totalIssues: 1,
-        },
-      };
-      const updateUserData = await usersCollection.updateOne(query, update);
+        const issue = await issuesCollection.insertOne(issueData);
 
-      res.json({ message: "Report an issue send successful." });
+        const issueTimeline = {
+          issueId: issue.insertedId,
+          status: "Pending",
+          message: "issue reported by citizen.",
+          updatedBy: "citizen",
+          createAt: new Date(),
+        };
+        const createIssueTimeline = await timelineCollection.insertOne(
+          issueTimeline
+        );
+
+        const issueSendBy = issueData.issueBy;
+        const query = { email: issueSendBy };
+        const update = {
+          $inc: {
+            totalIssues: 1,
+          },
+        };
+        const updateUserData = await usersCollection.updateOne(query, update);
+
+        res.json({ message: "Report an issue send successful." });
+      } catch (error) {
+        console.log("report issue error: ", error);
+        res.json({ message: "Failed to report an issue!" });
+      }
     });
 
     // get all issues from db
     app.get("/api/all-issues", async (req, res) => {
-      const { email, status, category } = req.query;
+      try {
+        const { email, status, category } = req.query;
 
-      const query = {};
+        const query = {};
 
-      // user-specific issues
-      if (email) {
-        query.issueBy = email;
+        // user-specific issues
+        if (email) {
+          query.issueBy = email;
+        }
+
+        // optional filters
+        if (status && status !== "All") {
+          query.status = status;
+        }
+
+        if (category && category !== "All") {
+          query.category = category;
+        }
+        const result = await issuesCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+
+        res.json({ message: "Failed to fetch issues" });
       }
-
-      // optional filters
-      if (status && status !== "All") {
-        query.status = status;
-      }
-
-      if (category && category !== "All") {
-        query.category = category;
-      }
-      const result = await issuesCollection.find(query).toArray();
-      res.send(result);
     });
 
     // admin assigned issue to staff
     app.patch("/api/issues/:id/assign", async (req, res) => {
-      const issueId = req.params.id;
-      const { staffEmail, staffName } = req.body;
+      try {
+        const issueId = req.params.id;
+        const { staffEmail, staffName } = req.body;
 
-      // prevent re-assign
-      const issue = await issuesCollection.findOne({
-        _id: new ObjectId(issueId),
-      });
+        // prevent re-assign
+        const issue = await issuesCollection.findOne({
+          _id: new ObjectId(issueId),
+        });
 
-      if (issue.assignedStaff) {
-        return res.status(400).send({ message: "Staff already assigned" });
-      }
-
-      const result = await issuesCollection.updateOne(
-        { _id: new ObjectId(issueId) },
-        {
-          $set: {
-            assignedStaff: staffName,
-            assignedStaffEmail: staffEmail,
-          },
+        if (issue.assignedStaff) {
+          return res.status(400).send({ message: "Staff already assigned" });
         }
-      );
 
-      const updateTimeLine = await timelineCollection.insertOne({
-        issueId,
-        status: "Pending",
-        message: "Issue assigned to staff",
-        updatedBy: "admin",
-        createdAt: new Date(),
-      });
+        const result = await issuesCollection.updateOne(
+          { _id: new ObjectId(issueId) },
+          {
+            $set: {
+              assignedStaff: staffName,
+              assignedStaffEmail: staffEmail,
+            },
+          }
+        );
 
-      res.send({ success: true });
+        const updateTimeLine = await timelineCollection.insertOne({
+          issueId,
+          status: "Pending",
+          message: "Issue assigned to staff",
+          updatedBy: "admin",
+          createdAt: new Date(),
+        });
+
+        res.send({ success: true });
+      } catch (error) {
+        console.log("Assigned issue to staff error:", error);
+
+        res.json({ message: "Failed to assigned staff" });
+      }
     });
 
     // admin reject issue
     app.patch("/api/issues/:id/reject", async (req, res) => {
-      const { id } = req.params;
-      const updateIssue = await issuesCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: {
-            status: "Rejected",
-          },
-        }
-      );
+      try {
+        const { id } = req.params;
+        const updateIssue = await issuesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: "Rejected",
+            },
+          }
+        );
 
-      const updateTimeLine = await timelineCollection.insertOne({
-        issueId: id,
-        status: "Rejected",
-        message: "Issue rejected by admin",
-        updatedBy: "admin",
-        createdAt: new Date(),
-      });
+        const updateTimeLine = await timelineCollection.insertOne({
+          issueId: id,
+          status: "Rejected",
+          message: "Issue rejected by admin",
+          updatedBy: "admin",
+          createdAt: new Date(),
+        });
 
-      res.send({ message: "success" });
+        res.send({ message: "Issue rejected successfully" });
+      } catch (error) {
+        console.log("Issue rejected error:", error);
+
+        res.json({ message: "Issue rejected failed!!" });
+      }
     });
 
     // Send a ping to confirm a successful connection
