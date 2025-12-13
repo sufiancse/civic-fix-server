@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 const port = process.env.PORT || 3000;
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
@@ -71,10 +71,17 @@ async function run() {
       res.send(result);
     });
 
-    // get all users from db
+    // get all users data from db
     app.get("/api/users", async (req, res) => {
-      const {email} = req.query
-      const result = await usersCollection.find({email}).toArray();
+      const { email, role } = req.query;
+      const query = {};
+      if (email) {
+        query.email = email;
+      }
+      if (role) {
+        query.role = role;
+      }
+      const result = await usersCollection.find(query).toArray();
       res.send(result);
     });
 
@@ -109,8 +116,83 @@ async function run() {
 
     // get all issues from db
     app.get("/api/all-issues", async (req, res) => {
-      const result = await issuesCollection.find().toArray();
+      const { email, status, category } = req.query;
+
+      const query = {};
+
+      // user-specific issues
+      if (email) {
+        query.issueBy = email;
+      }
+
+      // optional filters
+      if (status && status !== "All") {
+        query.status = status;
+      }
+
+      if (category && category !== "All") {
+        query.category = category;
+      }
+      const result = await issuesCollection.find(query).toArray();
       res.send(result);
+    });
+
+    // admin assigned issue to staff
+    app.patch("/api/issues/:id/assign", async (req, res) => {
+      const issueId = req.params.id;
+      const { staffEmail, staffName } = req.body;
+
+      // prevent re-assign
+      const issue = await issuesCollection.findOne({
+        _id: new ObjectId(issueId),
+      });
+
+      if (issue.assignedStaff) {
+        return res.status(400).send({ message: "Staff already assigned" });
+      }
+
+      const result = await issuesCollection.updateOne(
+        { _id: new ObjectId(issueId) },
+        {
+          $set: {
+            assignedStaff: staffName,
+            assignedStaffEmail: staffEmail,
+          },
+        }
+      );
+
+      const updateTimeLine = await timelineCollection.insertOne({
+        issueId,
+        status: "Pending",
+        message: "Issue assigned to staff",
+        updatedBy: "admin",
+        createdAt: new Date(),
+      });
+
+      res.send({ success: true });
+    });
+
+    // admin reject issue
+    app.patch("/api/issues/:id/reject", async (req, res) => {
+      const { id } = req.params;
+      const updateIssue = await issuesCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status: "Rejected",
+          },
+        }
+      );
+
+      const updateTimeLine = await timelineCollection.insertOne({
+        issueId: id,
+        status: "Rejected",
+        message: "Issue rejected by admin",
+        updatedBy: "admin",
+        createdAt: new Date(),
+      });
+
+      res.send({ message: "success" });
     });
 
     // Send a ping to confirm a successful connection
