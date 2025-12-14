@@ -136,8 +136,8 @@ async function run() {
       }
     });
 
-    // update admin data
-    app.patch("/api/admin/:id/update", async (req, res) => {
+    // update personal info staff (name, image) & admin & citizen
+    app.patch("/api/user/:id/update", async (req, res) => {
       try {
         const { id } = req.params;
         const { name, image } = req.body;
@@ -260,7 +260,10 @@ async function run() {
         if (category && category !== "All") {
           query.category = category;
         }
-        const result = await issuesCollection.find(query).toArray();
+        const result = await issuesCollection
+          .find(query)
+          .sort({ isBoosted: -1 })
+          .toArray();
         res.send(result);
       } catch (error) {
         console.log(error);
