@@ -136,7 +136,7 @@ async function run() {
       }
     });
 
-    // update admin data 
+    // update admin data
     app.patch("/api/admin/:id/update", async (req, res) => {
       try {
         const { id } = req.params;
@@ -160,7 +160,7 @@ async function run() {
 
         res.status(400).json({ message: "Failed update admin data." });
       }
-    })
+    });
 
     // admin block user & update user data
     app.patch("/api/user/:id/block", async (req, res) => {
@@ -229,13 +229,27 @@ async function run() {
     // get all issues from db
     app.get("/api/all-issues", async (req, res) => {
       try {
-        const { email, status, category } = req.query;
+        const { email, status, category, assignedStaffEmail, priority } =
+          req.query;
 
         const query = {};
 
         // user-specific issues
         if (email) {
           query.issueBy = email;
+        }
+
+        if (assignedStaffEmail) {
+          query.assignedStaffEmail = assignedStaffEmail;
+        }
+
+        // 3priority filter using isBoosted
+        if (priority === "High") {
+          query.isBoosted = true; // High = true
+        }
+
+        if (priority === "Normal") {
+          query.isBoosted = false; // Normal = false
         }
 
         // optional filters
@@ -252,6 +266,66 @@ async function run() {
         console.log(error);
 
         res.json({ message: "Failed to fetch issues" });
+      }
+    });
+
+    // change issue status by staff
+    app.patch("/api/issues/:id/status", async (req, res) => {
+      try {
+        const issueId = req.params.id;
+        const { newStatus, changedBy } = req.body;
+
+        const issue = await issuesCollection.findOne({
+          _id: new ObjectId(issueId),
+        });
+
+        const validFlow = {
+          Pending: ["In-progress"],
+          "In-progress": ["Working"],
+          Working: ["Resolved"],
+          Resolved: ["Closed"],
+        };
+
+        const STATUS_MESSAGES = {
+          "In-progress": "Work started on the issue",
+          Working: "Work is actively being done on the issue",
+          Resolved: "Issue marked as resolved",
+          Closed: "Issue closed by staff",
+        };
+
+        if (!validFlow[issue.status]?.includes(newStatus)) {
+          return res.status(400).send({ message: "Invalid status change" });
+        }
+
+        const statusMessage =
+          STATUS_MESSAGES[newStatus] || `Status changed to ${newStatus}`;
+
+        const updateResult = await issuesCollection.updateOne(
+          { _id: new ObjectId(issueId) },
+          {
+            $set: { status: newStatus },
+          }
+        );
+
+        const issueTimeline = {
+          issueId,
+          status: newStatus,
+          message: statusMessage,
+          updatedBy: changedBy,
+          createAt: new Date(),
+        };
+        const createIssueTimeline = await timelineCollection.insertOne(
+          issueTimeline
+        );
+
+        res.send({
+          success: true,
+          newStatus,
+          message: statusMessage,
+        });
+      } catch (error) {
+        console.log("Issue status changing error:", error);
+        res.json({ message: "Issue status changing error." });
       }
     });
 
