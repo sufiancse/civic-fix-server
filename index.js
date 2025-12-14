@@ -95,6 +95,47 @@ async function run() {
       }
     });
 
+    // update staff data by admin
+    app.patch("/api/staff/:id/update", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { name, phone, image } = req.body;
+
+        const updateStaffData = await usersCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+          },
+          {
+            $set: {
+              name,
+              phone,
+              image,
+            },
+          }
+        );
+
+        res.json({ message: "Staff data successfully updated." });
+      } catch (error) {
+        console.log("Update staff data problem: ", error);
+
+        res.status(400).json({ message: "Failed update staff data." });
+      }
+    });
+
+    // delete staff by admin
+    app.delete("/api/staff/:id/delete", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const deleteStaff = await usersCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.status(200).json({ message: "Staff delete successful." });
+      } catch (error) {
+        console.log("Staff delete error:", error);
+        res.status(400).json({ message: "Failed staff delete." });
+      }
+    });
+
     // admin block user & update user data
     app.patch("/api/user/:id/block", async (req, res) => {
       const { id } = req.params;
