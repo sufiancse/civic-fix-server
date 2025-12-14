@@ -272,6 +272,32 @@ async function run() {
       }
     });
 
+    // issue update by user
+    app.patch("/api/issue/:id/update", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { title, description, category, image, location } = req.body;
+        const result = await issuesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              title,
+              description,
+              category,
+              image,
+              location,
+            },
+          }
+        );
+
+        res.json({ message: "Issue update successful." });
+      } catch (error) {
+        console.log("Issue updated error: ", error);
+
+        res.json({ message: "Issue update failed." });
+      }
+    });
+
     // change issue status by staff
     app.patch("/api/issues/:id/status", async (req, res) => {
       try {
@@ -399,6 +425,21 @@ async function run() {
         console.log("Issue rejected error:", error);
 
         res.json({ message: "Issue rejected failed!!" });
+      }
+    });
+
+    // user delete issue
+    app.delete("/api/issue/:id/delete", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await issuesCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.json({ message: "Issue delete successful." });
+      } catch (error) {
+        console.log("Issue delete error: ", error);
+
+        res.json({ message: "Issue delete failed." });
       }
     });
 
