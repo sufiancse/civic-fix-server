@@ -202,7 +202,7 @@ async function run() {
         const issue = await issuesCollection.insertOne(issueData);
 
         const issueTimeline = {
-          issueId: issue.insertedId,
+          issueId: issue.insertedId.toString(),
           status: "Pending",
           message: "issue reported by citizen.",
           updatedBy: "citizen",
@@ -274,6 +274,29 @@ async function run() {
       }
     });
 
+    // get single issue by issue id
+    app.get("/api/issue/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await issuesCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        const timeLine = await timelineCollection
+          .find({ issueId: id })
+          .sort({ createAt: -1 })
+          .toArray();
+
+        res
+          .status(200)
+          .json({ message: "Data fetching successful.", result, timeLine });
+      } catch (error) {
+        console.log("fetching single issue problem: ", error);
+
+        res.json({ message: "Failed to get issue data." });
+      }
+    });
+
     // issue update by user
     app.patch("/api/issue/:id/update", async (req, res) => {
       try {
@@ -297,6 +320,40 @@ async function run() {
         console.log("Issue updated error: ", error);
 
         res.json({ message: "Issue update failed." });
+      }
+    });
+
+    // upvote by user
+    app.patch("/api/issue/:id/upvote", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { userEmail } = req.body; 
+
+        // check issue
+        const issue = await issuesCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        // already upvoted
+        if (issue.upVotedBy?.includes(userEmail)) {
+          return res.status(400).json({
+            message: "You have already upvoted this issue",
+          });
+        }
+
+        // first time upvote
+        await issuesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $inc: { upVotes: 1 },
+            $addToSet: { upVotedBy: userEmail },
+          }
+        );
+
+        res.json({ message: "Upvote successful" });
+      } catch (error) {
+        console.log("Upvote error:", error);
+        res.status(500).json({ message: "Upvote failed" });
       }
     });
 
@@ -390,7 +447,7 @@ async function run() {
           status: "Pending",
           message: "Issue assigned to staff",
           updatedBy: "admin",
-          createdAt: new Date(),
+          createAt: new Date(),
         });
 
         res.send({ success: true });
@@ -476,38 +533,42 @@ async function run() {
     });
 
     app.post("/payment-success", async (req, res) => {
-      const { sessionId } = req.body;
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      try {
+        const { sessionId } = req.body;
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-      const updateUser = await usersCollection.updateOne(
-        { _id: new ObjectId(session.metadata.userId) },
-        {
-          $set: {
-            isPremium: true,
-          },
+        const updateUser = await usersCollection.updateOne(
+          { _id: new ObjectId(session.metadata.userId) },
+          {
+            $set: {
+              isPremium: true,
+            },
+          }
+        );
+
+        const query = { transactionId: session.payment_intent };
+        const isExist = await paymentsCollection.findOne(query);
+
+        if (isExist) {
+          return res.json({ message: "Already exists.", transactionId });
         }
-      );
 
-      const query = { transactionId: session.payment_intent };
-      const isExist = await paymentsCollection.findOne(query);
+        const createPaymentCollection = await paymentsCollection.insertOne({
+          userId: session.metadata.userId,
+          name: session.metadata.userName,
+          email: session.metadata.userEmail,
+          amount: session.amount_total / 100,
+          transactionId: session.payment_intent,
+          createAt: new Date().toLocaleString(),
+          paymentType: "Subscription",
+          quantity: 1,
+        });
 
-      if (isExist) {
-        return res.json({ message: "Already exists.", transactionId });
+        res.send(updateUser);
+      } catch (error) {
+        console.log("payment success error: ", error);
+        res.json({ message: "payment success error" });
       }
-
-      const createPaymentCollection = await paymentsCollection.insertOne({
-        userId: session.metadata.userId,
-        name: session.metadata.userName,
-        email: session.metadata.userEmail,
-        amount: session.amount_total / 100,
-        transactionId: session.payment_intent,
-        createAt: new Date().toLocaleString(),
-        paymentType: "Subscription",
-        quantity: 1,
-      });
-
-
-      res.send(updateUser);
     });
 
     // Send a ping to confirm a successful connection
