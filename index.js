@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 const port = process.env.PORT || 3000;
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
@@ -57,6 +58,7 @@ async function run() {
     const issuesCollection = db.collection("issues");
     const usersCollection = db.collection("users");
     const timelineCollection = db.collection("issuesTimeline");
+    const paymentsCollection = db.collection("payments");
 
     // Users data related APIs
     // save all users data in db
@@ -441,6 +443,71 @@ async function run() {
 
         res.json({ message: "Issue delete failed." });
       }
+    });
+
+    // Payment endpoints
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: "Subscription",
+              },
+              unit_amount: paymentInfo?.price * 100,
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo?.email,
+        mode: "payment",
+        metadata: {
+          userId: paymentInfo?.userId,
+          userEmail: paymentInfo?.email,
+          userName: paymentInfo?.name,
+        },
+        success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_DOMAIN}/dashboard/profile`,
+      });
+      res.send({ url: session.url });
+    });
+
+    app.post("/payment-success", async (req, res) => {
+      const { sessionId } = req.body;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+      const updateUser = await usersCollection.updateOne(
+        { _id: new ObjectId(session.metadata.userId) },
+        {
+          $set: {
+            isPremium: true,
+          },
+        }
+      );
+
+      const query = { transactionId: session.payment_intent };
+      const isExist = await paymentsCollection.findOne(query);
+
+      if (isExist) {
+        return res.json({ message: "Already exists.", transactionId });
+      }
+
+      const createPaymentCollection = await paymentsCollection.insertOne({
+        userId: session.metadata.userId,
+        name: session.metadata.userName,
+        email: session.metadata.userEmail,
+        amount: session.amount_total / 100,
+        transactionId: session.payment_intent,
+        createAt: new Date().toLocaleString(),
+        paymentType: "Subscription",
+        quantity: 1,
+      });
+
+
+      res.send(updateUser);
     });
 
     // Send a ping to confirm a successful connection
