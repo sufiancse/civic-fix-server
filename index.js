@@ -204,7 +204,7 @@ async function run() {
         const issueTimeline = {
           issueId: issue.insertedId.toString(),
           status: "Pending",
-          message: "issue reported by citizen.",
+          message: "Issue reported by citizen.",
           updatedBy: "citizen",
           createAt: new Date(),
         };
@@ -327,7 +327,7 @@ async function run() {
     app.patch("/api/issue/:id/upvote", async (req, res) => {
       try {
         const { id } = req.params;
-        const { userEmail } = req.body; 
+        const { userEmail } = req.body;
 
         // check issue
         const issue = await issuesCollection.findOne({
@@ -491,9 +491,21 @@ async function run() {
     app.delete("/api/issue/:id/delete", async (req, res) => {
       try {
         const { id } = req.params;
+        const { email } = req.body;
+
+        const updateUser = await usersCollection.updateOne(
+          { email },
+          {
+            $inc: {
+              totalIssues: -1,
+            },
+          }
+        );
+
         const result = await issuesCollection.deleteOne({
           _id: new ObjectId(id),
         });
+
         res.json({ message: "Issue delete successful." });
       } catch (error) {
         console.log("Issue delete error: ", error);
@@ -502,7 +514,8 @@ async function run() {
       }
     });
 
-    // Payment endpoints
+    // all payments
+    // subscription Payment endpoints
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
 
@@ -532,6 +545,7 @@ async function run() {
       res.send({ url: session.url });
     });
 
+    // subscription payment success
     app.post("/payment-success", async (req, res) => {
       try {
         const { sessionId } = req.body;
@@ -568,6 +582,86 @@ async function run() {
       } catch (error) {
         console.log("payment success error: ", error);
         res.json({ message: "payment success error" });
+      }
+    });
+
+    // Issue boost Payment endpoints
+    app.post("/create-issue-boost-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: `Boost issue for: ${paymentInfo.issueTitle}`,
+              },
+              unit_amount: paymentInfo?.price * 100,
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo?.issueBoostedBy,
+        mode: "payment",
+        metadata: {
+          issueId: paymentInfo?.issueId,
+          issueTitle: paymentInfo?.issueTitle,
+          issueReportedBy: paymentInfo?.issueReportedBy,
+          issueBoostedBy: paymentInfo?.issueBoostedBy,
+        },
+        success_url: `${process.env.CLIENT_DOMAIN}/issue-boost-payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_DOMAIN}/issue-details/${paymentInfo.issueId}`,
+      });
+      res.send({ url: session.url });
+    });
+
+    // issue boost payment success
+    app.post("/issue-boost-payment-success", async (req, res) => {
+      try {
+        const { sessionId } = req.body;
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        const updateUser = await issuesCollection.updateOne(
+          { _id: new ObjectId(session.metadata.issueId) },
+          {
+            $set: {
+              isBoosted: true,
+            },
+          }
+        );
+
+        const query = { transactionId: session.payment_intent };
+        const isExist = await paymentsCollection.findOne(query);
+
+        if (isExist) {
+          return res.json({ message: "Already exists.", transactionId });
+        }
+
+        const createPaymentCollection = await paymentsCollection.insertOne({
+          issueId: session.metadata.issueId,
+          issueTitle: session.metadata.issueTitle,
+          issueReportedBy: session.metadata.issueReportedBy,
+          issueBoostedBy: session.metadata.issueBoostedBy,
+          amount: session.amount_total / 100,
+          transactionId: session.payment_intent,
+          createAt: new Date().toLocaleString(),
+          paymentType: "Boost Issue",
+          quantity: 1,
+        });
+
+        const updateTimeLine = await timelineCollection.insertOne({
+          issueId: session.metadata.issueId,
+          status: "Boosted",
+          message: "Issue boost by citizen.",
+          updatedBy: "citizen",
+          createAt: new Date(),
+        });
+
+        res.status(200).json({ message: "Issue boost successful." });
+      } catch (error) {
+        console.log("Issue boost payment success error: ", error);
+        res.json({ message: "Issue boost payment success error" });
       }
     });
 
