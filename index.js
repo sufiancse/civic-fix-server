@@ -89,8 +89,12 @@ async function run() {
         if (role) {
           query.role = role;
         }
+
+
         const result = await usersCollection.find(query).toArray();
-        res.send(result);
+
+        const boosted = await paymentsCollection.findOne({email})
+        res.send({result,boosted});
       } catch (error) {
         console.log("get user error: ", error);
         res.json({ message: "failed to fetch users" });
@@ -231,46 +235,52 @@ async function run() {
     // get all issues from db
     app.get("/api/all-issues", async (req, res) => {
       try {
-        const { email, status, category, assignedStaffEmail, priority } =
-          req.query;
+        const {
+          email,
+          status,
+          category,
+          assignedStaffEmail,
+          priority,
+          search,
+          page = 1,
+          limit = 8,
+        } = req.query;
 
         const query = {};
 
-        // user-specific issues
-        if (email) {
-          query.issueBy = email;
+        if (email) query.issueBy = email;
+        if (assignedStaffEmail) query.assignedStaffEmail = assignedStaffEmail;
+
+        if (priority === "High") query.isBoosted = true;
+        if (priority === "Normal") query.isBoosted = false;
+
+        if (status && status !== "All") query.status = status;
+        if (category && category !== "All") query.category = category;
+
+        if (search) {
+          query.$or = [{ title: { $regex: search, $options: "i" } }];
         }
 
-        if (assignedStaffEmail) {
-          query.assignedStaffEmail = assignedStaffEmail;
-        }
+        const skip = (parseInt(page) - 1) * parseInt(limit);
 
-        // 3priority filter using isBoosted
-        if (priority === "High") {
-          query.isBoosted = true; // High = true
-        }
+        const total = await issuesCollection.countDocuments(query);
 
-        if (priority === "Normal") {
-          query.isBoosted = false; // Normal = false
-        }
-
-        // optional filters
-        if (status && status !== "All") {
-          query.status = status;
-        }
-
-        if (category && category !== "All") {
-          query.category = category;
-        }
-        const result = await issuesCollection
+        const issues = await issuesCollection
           .find(query)
           .sort({ isBoosted: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
           .toArray();
-        res.send(result);
+
+        res.send({
+          issues,
+          total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: parseInt(page),
+        });
       } catch (error) {
         console.log(error);
-
-        res.json({ message: "Failed to fetch issues" });
+        res.status(500).send({ message: "Failed to fetch issues" });
       }
     });
 
@@ -283,7 +293,7 @@ async function run() {
           .limit(6)
           .toArray();
 
-        res.send(latestResolvedIssues)
+        res.send(latestResolvedIssues);
       } catch (error) {
         console.log("Fetch latest resolved issues:", error);
 
@@ -681,6 +691,37 @@ async function run() {
       } catch (error) {
         console.log("Issue boost payment success error: ", error);
         res.json({ message: "Issue boost payment success error" });
+      }
+    });
+
+    app.get("/api/payments", async (req, res) => {
+      try {
+        const { search = "", type = "all" } = req.query;
+
+        let query = {};
+
+        // 🔍 search by name / email
+        if (search) {
+          query.$or = [
+            { name: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+            { issueBoostedBy: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        // 🎯 filter by paymentType
+        if (type !== "all") {
+          query.paymentType = type;
+        }
+
+        const payments = await paymentsCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+
+        res.send(payments);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to load payments" });
       }
     });
 
