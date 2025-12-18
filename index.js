@@ -274,6 +274,25 @@ async function run() {
       }
     });
 
+    // get latest resolved issues
+    app.get("/api/latest-resolved-issues", async (req, res) => {
+      try {
+        const latestResolvedIssues = await issuesCollection
+          .find({ status: "Resolved" })
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+
+        res.send(latestResolvedIssues)
+      } catch (error) {
+        console.log("Fetch latest resolved issues:", error);
+
+        res.json({
+          message: "Failed to fetch latest resolved issues.",
+        });
+      }
+    });
+
     // get single issue by issue id
     app.get("/api/issue/:id", async (req, res) => {
       try {
