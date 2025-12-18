@@ -90,11 +90,10 @@ async function run() {
           query.role = role;
         }
 
-
         const result = await usersCollection.find(query).toArray();
 
-        const boosted = await paymentsCollection.findOne({email})
-        res.send({result,boosted});
+        const boosted = await paymentsCollection.findOne({ email });
+        res.send({ result, boosted });
       } catch (error) {
         console.log("get user error: ", error);
         res.json({ message: "failed to fetch users" });
@@ -694,6 +693,7 @@ async function run() {
       }
     });
 
+    // get all payments data
     app.get("/api/payments", async (req, res) => {
       try {
         const { search = "", type = "all" } = req.query;
@@ -722,6 +722,321 @@ async function run() {
         res.send(payments);
       } catch (error) {
         res.status(500).send({ message: "Failed to load payments" });
+      }
+    });
+
+    // user dashboard home
+    app.get("/api/user-dashboard", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        //issues
+        const totalIssues = await issuesCollection.countDocuments({
+          issueBy: email,
+        });
+
+        const pending = await issuesCollection.countDocuments({
+          issueBy: email,
+          status: "Pending",
+        });
+
+        const inProgress = await issuesCollection.countDocuments({
+          issueBy: email,
+          status: { $in: ["In-progress", "Working"] },
+        });
+
+        const resolved = await issuesCollection.countDocuments({
+          issueBy: email,
+          status: "Resolved",
+        });
+
+        // all payments
+        const payments = await paymentsCollection
+          .find({
+            $or: [{ email }, { issueBoostedBy: email }],
+          })
+          .toArray();
+
+        const totalPaymentAmount = payments.reduce(
+          (sum, p) => sum + Number(p.amount || 0),
+          0
+        );
+
+        res.send({
+          stats: {
+            totalIssues,
+            pending,
+            inProgress,
+            resolved,
+            totalPaymentAmount,
+          },
+          chart: {
+            barData: [
+              { name: "Pending", count: pending },
+              { name: "In Progress", count: inProgress },
+              { name: "Resolved", count: resolved },
+            ],
+            pieData: [
+              { name: "Pending", value: pending, color: "#FACC15" },
+              { name: "In Progress", value: inProgress, color: "#8B5CF6" },
+              { name: "Resolved", value: resolved, color: "#22C55E" },
+            ],
+          },
+        });
+      } catch (error) {
+        console.log("Dashboard error:", error);
+        res.status(500).send({ message: "Failed to load dashboard data" });
+      }
+    });
+
+    // admin dashboard home
+    app.get("/api/admin-dashboard", async (req, res) => {
+      try {
+        // ===== USERS =====
+        const totalUsers = await usersCollection.countDocuments({
+          role: "citizen",
+        });
+
+        // ===== ISSUES =====
+        const totalIssues = await issuesCollection.countDocuments();
+        const resolvedIssues = await issuesCollection.countDocuments({
+          status: "Resolved",
+        });
+        const pendingIssues = await issuesCollection.countDocuments({
+          status: "Pending",
+        });
+        const rejectedIssues = await issuesCollection.countDocuments({
+          status: "Rejected",
+        });
+
+        // ===== PAYMENTS =====
+        const payments = await paymentsCollection.find().toArray();
+        const totalPayments = payments.reduce(
+          (sum, p) => sum + (p.amount || 0),
+          0
+        );
+
+        // ===== ISSUE STATUS PIE =====
+        const issueStatusData = [
+          { name: "Resolved", value: resolvedIssues, color: "#22C55E" },
+          { name: "Pending", value: pendingIssues, color: "#FACC15" },
+          { name: "Rejected", value: rejectedIssues, color: "#EF4444" },
+        ];
+
+        // ===== MONTHLY ISSUES BAR =====
+        const monthlyAggregation = await issuesCollection
+          .aggregate([
+            // ignore documents without createdAt
+            { $match: { createdAt: { $exists: true, $ne: null } } },
+
+            // convert string to Date if needed
+            {
+              $addFields: {
+                createdAtDate: {
+                  $cond: [
+                    { $eq: [{ $type: "$createdAt" }, "string"] },
+                    { $toDate: "$createdAt" },
+                    "$createdAt",
+                  ],
+                },
+              },
+            },
+
+            // group by month
+            {
+              $group: {
+                _id: { $month: "$createdAtDate" },
+                issues: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        const months = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+        const monthlyIssues = monthlyAggregation.map((item) => ({
+          month: months[item._id - 1],
+          issues: item.issues,
+        }));
+
+        // ===== LATEST DATA =====
+        const latestIssues = await issuesCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .project({ title: 1, status: 1 })
+          .toArray();
+
+        const latestPayments = await paymentsCollection
+          .find()
+          .sort({ _id: -1 })
+          .limit(5)
+          .project({ name: 1, amount: 1 })
+          .toArray();
+
+        const latestUsers = await usersCollection
+          .find()
+          .sort({ _id: -1 })
+          .limit(5)
+          .project({ name: 1, email: 1 })
+          .toArray();
+
+        res.send({
+          stats: {
+            totalIssues,
+            resolvedIssues,
+            pendingIssues,
+            rejectedIssues,
+            totalPayments,
+            totalUsers,
+          },
+          issueStatusData,
+          monthlyIssues,
+          latestIssues,
+          latestPayments,
+          latestUsers,
+        });
+      } catch (error) {
+        console.log(error);
+        res.status(500).send({ message: "Dashboard data fetch failed" });
+      }
+    });
+
+    // staff-dashboard data fetch
+    app.get("/api/staff-dashboard", async (req, res) => {
+      try {
+        const { email } = req.query; // staff email from frontend
+
+        if (!email) return res.status(400).json({ message: "Email required" });
+
+        // ===== ISSUES =====
+        const totalAssigned = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+        });
+
+        const resolved = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          status: "Resolved",
+        });
+
+        const pending = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          status: "Pending",
+        });
+
+        const inProgress = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          status: { $in: ["In-progress", "Working"] },
+        });
+
+        // Pie chart data
+        const taskStatusData = [
+          { name: "Resolved", value: resolved, color: "#22C55E" },
+          { name: "In Progress", value: inProgress, color: "#3B82F6" },
+          { name: "Pending", value: pending, color: "#FACC15" },
+        ];
+
+        // Bar chart for issue priority (Boosted or not)
+        const highPriority = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          isBoosted: true,
+        });
+        const normalPriority = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          isBoosted: false,
+        });
+        const priorityData = [
+          { name: "High", count: highPriority },
+          { name: "Normal", count: normalPriority },
+        ];
+
+        // Weekly activity (last 7 days)
+        const today = new Date();
+        const last7Days = [...Array(7)].map((_, i) => {
+          const d = new Date(today);
+          d.setDate(today.getDate() - i);
+          return {
+            day: d.toLocaleDateString("en-US", { weekday: "short" }),
+            assigned: 0,
+            resolved: 0,
+          };
+        });
+
+        const assignedIssues = await issuesCollection
+          .find({
+            assignedStaffEmail: email,
+            createdAt: {
+              $gte: new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000),
+            },
+          })
+          .toArray();
+
+        assignedIssues.forEach((issue) => {
+          const index = last7Days.findIndex(
+            (d) =>
+              d.day ===
+              new Date(issue.createdAt).toLocaleDateString("en-US", {
+                weekday: "short",
+              })
+          );
+          if (index !== -1) {
+            last7Days[index].assigned += 1;
+            if (issue.status === "Resolved") last7Days[index].resolved += 1;
+          }
+        });
+
+        last7Days.reverse();
+
+        // ===== Today Tasks =====
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const endOfToday = new Date();
+        endOfToday.setHours(23, 59, 59, 999);
+
+        const todayAssigned = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          createdAt: { $gte: startOfToday, $lte: endOfToday },
+        });
+
+        const todayPending = await issuesCollection.countDocuments({
+          assignedStaffEmail: email,
+          status: "Pending",
+          createdAt: { $gte: startOfToday, $lte: endOfToday },
+        });
+
+        res.json({
+          stats: {
+            totalAssigned,
+            resolved,
+            pending,
+            inProgress,
+            todayAssigned, 
+            todayPending,
+          },
+          charts: {
+            taskStatusData,
+            priorityData,
+            activityData: last7Days,
+          },
+        });
+      } catch (error) {
+        console.log("Staff dashboard error:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to fetch staff dashboard data" });
       }
     });
 
