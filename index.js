@@ -315,7 +315,7 @@ async function run() {
 
         const issues = await issuesCollection
           .find(query)
-          .sort({ isBoosted: -1 })
+          .sort({ isBoosted: -1, createdAt: -1 })
           .skip(skip)
           .limit(parseInt(limit))
           .toArray();
